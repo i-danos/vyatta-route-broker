@@ -335,7 +335,7 @@ struct route_broker_client *route_broker_client_create(const char *name)
 	for (i = 0; i < ROUTE_PRIORITY_MAX; i++) {
 		rclient->client[i] = broker_client_create(route_broker[i],
 					     &route_broker_client_ops, name);
-		if (!rclient->client) {
+		if (!rclient->client[i]) {
 			route_broker_unlock();
 			goto failed;
 		}
