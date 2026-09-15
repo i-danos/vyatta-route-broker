@@ -1,3 +1,10 @@
+vyatta-route-broker (1.0.5) unstable; urgency=medium
+
+  * route_broker: stop the kernel consumer instead of cancelling it
+  * route_broker: give each data plane session its own dp_data socket
+
+ -- DANOS Open <miwide20190328@gmail.com>  Tue, 15 Sep 2026 17:07:28 +0800
+
 vyatta-route-broker (1.0.4) unstable; urgency=medium
 
   * route_broker: detail log
