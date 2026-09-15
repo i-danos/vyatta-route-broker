@@ -85,7 +85,28 @@ void broker_dp_data_client(zsock_t *pipe, void *arg)
 	struct route_broker_client *client;
 	struct broker_client *bc;
 	char *ep;
-	static zsock_t *dp_data_sock;
+	/*
+	 * Not static.
+	 *
+	 * A function-local static is shared by every invocation, and this
+	 * function is one zactor per data plane session --
+	 * start_new_dp_data_thread() creates a new one each time a session
+	 * comes up. So the socket of a starting thread and the socket of a
+	 * thread on its way out were the same variable: the old one's
+	 * zsock_destroy(&dp_data_sock) at stop_client could close the new
+	 * one's socket, and the new one would then use and close it again.
+	 *
+	 * A double close of a ZMQ socket faults inside the allocator, which is
+	 * where the crashes landed: malloc.c by way of zmq_close() and czmq,
+	 * with a stack too corrupted to walk. brokerd died on every single FPM
+	 * session bounce -- three bounces, three cores -- and took the data
+	 * plane down with it each time, because the data plane is restarted
+	 * when its feed dies.
+	 *
+	 * Nothing outside this function can see the variable, so the static
+	 * bought nothing at all.
+	 */
+	zsock_t *dp_data_sock = NULL;
 	struct dp_data_client_args *args = arg;
 	const char *sock_ep = args->sock_ep;
 	object_broker_client_publish_cb client_publish = args->client_publish;

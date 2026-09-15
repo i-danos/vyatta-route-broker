@@ -11,12 +11,14 @@
 
 #include <libmnl/libmnl.h>
 #include <czmq.h>
+#include <stdbool.h>
 #include <zmq.h>
 
 #include "broker.h"
 #include "route_broker_internal.h"
 
 static pthread_t broker_consumer_thread;
+static volatile bool broker_consumer_stop;
 
 static object_broker_client_publish_cb obj_kernel_publish;
 
@@ -28,7 +30,7 @@ static void *broker_consumer(void *arg)
 
 	client = route_broker_client_create("kernel");
 
-	while (true) {
+	while (!broker_consumer_stop) {
 		while ((obj = route_broker_client_get_data(client, &bc))) {
 			if (obj_kernel_publish(obj, NULL)) {
 				client->errors++;
@@ -53,7 +55,8 @@ static void *broker_consumer(void *arg)
 		}
 	}
 
-	pthread_exit(0);
+	route_broker_client_delete(client);
+	return NULL;
 }
 
 int route_broker_kernel_init(object_broker_client_publish_cb publish)
@@ -67,8 +70,29 @@ int route_broker_kernel_init(object_broker_client_publish_cb publish)
 
 }
 
+/*
+ * Ask the consumer to stop rather than cancelling it.
+ *
+ * This used to be pthread_cancel() followed by pthread_join(), and it is
+ * called on every FPM session teardown -- not at process exit. The consumer
+ * blocks in route_broker_client_get_data(), which waits on a condition
+ * variable: a cancellation point that reacquires route_broker_mutex before it
+ * returns. There is no pthread_cleanup handler anywhere in this library, so a
+ * cancel could destroy the thread while it held that mutex, between taking an
+ * object and freeing it, or inside a ZMQ send.
+ *
+ * The process then carried on with a mutex that would never be released and
+ * ZMQ state torn half-way, and the next publish faulted inside the allocator.
+ * brokerd died on every single FPM bounce -- twenty-one cores in one session,
+ * no exceptions -- and took the data plane with it each time, because the data
+ * plane is restarted when its feed dies.
+ *
+ * The loop's wait times out after a second, so the flag is noticed within
+ * that and the thread leaves by its own route with its locks released and its
+ * client deleted.
+ */
 void route_broker_kernel_shutdown(void)
 {
-	pthread_cancel(broker_consumer_thread);
+	broker_consumer_stop = true;
 	pthread_join(broker_consumer_thread, NULL);
 }
